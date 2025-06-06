@@ -1,4 +1,4 @@
-use crate::process::fork::CloneFlags;
+use crate::{arch::ipc::signal::SigSet, ipc::signal_types::SigInfo, process::fork::CloneFlags};
 use core::{
     ffi::c_int,
     sync::atomic::{AtomicBool, Ordering},
@@ -931,8 +931,58 @@ impl Syscall {
             SYS_SETRLIMIT => Ok(0),
 
             SYS_RT_SIGTIMEDWAIT => {
-                log::warn!("SYS_RT_SIGTIMEDWAIT has not yet been implemented");
-                Ok(0)
+                let sigset_size = args[3];
+                if sigset_size != ::core::mem::size_of::<usize>() {
+                    return Err(SystemError::EINVAL);
+                }
+
+                let sigset_reader =
+                    UserBufferReader::new(args[0] as *const u8, sigset_size, frame.is_from_user())?;
+                let sigset = *sigset_reader.read_one_from_user::<usize>(0)?;
+                let sigset = SigSet::from_bits_truncate(sigset as u64);
+
+                let uts = args[2];
+                let mut timespec = None;
+                if uts != 0 {
+                    let uts_reader = UserBufferReader::new(
+                        uts as *const PosixTimeSpec,
+                        core::mem::size_of::<PosixTimeSpec>(),
+                        true,
+                    )?;
+                    timespec = Some(*uts_reader.read_one_from_user::<PosixTimeSpec>(0)?);
+                }
+
+                let current_pcb = ProcessManager::current_pcb();
+                let mut kernel_siginfo: Option<SigInfo> = None;
+
+                let ret = Self::do_sigtimedwait(current_pcb, sigset, timespec, &mut kernel_siginfo);
+                match ret {
+                    Ok(sig_num) => {
+                        if sig_num > 0 && args[1] != 0 {
+                            if let Some(kinfo) = kernel_siginfo {
+                                let mut uinfo = UserBufferWriter::new(
+                                    args[1] as *mut u8,
+                                    ::core::mem::size_of::<SigInfo>(),
+                                    frame.is_from_user(),
+                                )?;
+                                match uinfo.copy_one_to_user(&kinfo, 0) {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        log::error!(
+                                            "SYS_RT_SIGTIMEDWAIT: copy_info_to_user: {:?}",
+                                            e
+                                        );
+                                        return Err(SystemError::EFAULT);
+                                    }
+                                }
+                            }
+                        }
+                        return Ok(sig_num as usize);
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
             }
             _ => panic!("Unsupported syscall ID: {}", syscall_num),
         };

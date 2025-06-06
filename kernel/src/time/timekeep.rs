@@ -9,8 +9,8 @@ use crate::driver::rtc::interface::rtc_read_time_default;
 use super::{PosixTimeSpec, NSEC_PER_SEC};
 
 // 参考：https://code.dragonos.org.cn/xref/linux-3.4.99/include/linux/time.h#110
-const KTIME_MAX: i64 = !(1u64 << 63) as i64;
-const KTIME_SEC_MAX: i64 = KTIME_MAX / NSEC_PER_SEC as i64;
+pub const KTIME_MAX: i64 = !(1u64 << 63) as i64;
+pub const KTIME_SEC_MAX: i64 = KTIME_MAX / NSEC_PER_SEC as i64;
 
 #[allow(non_camel_case_types)]
 pub type ktime_t = i64;
