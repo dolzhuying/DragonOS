@@ -4,16 +4,19 @@ use alloc::{string::String, sync::Arc, vec::Vec};
 use log::error;
 use system_error::SystemError;
 
-use super::{FileType, FilldirContext, IndexNode, InodeId, Metadata, SpecialNodeData};
+use super::{FileType, IndexNode, InodeId, Metadata, SpecialNodeData};
 use crate::{
     driver::{
         base::{block::SeekFrom, device::DevicePrivateData},
         tty::tty_device::TtyFilePrivateData,
     },
-    filesystem::procfs::ProcfsFilePrivateData,
+    filesystem::{
+        epoll::{event_poll::EPollPrivateData, EPollItem},
+        procfs::ProcfsFilePrivateData,
+        vfs::FilldirContext,
+    },
     ipc::pipe::PipeFsPrivateData,
     libs::{rwlock::RwLock, spinlock::SpinLock},
-    net::event_poll::{EPollItem, EPollPrivateData},
     process::{cred::Cred, ProcessManager},
 };
 
@@ -346,13 +349,13 @@ impl File {
     /// # 读取目录项
     ///
     /// ## 参数
-    /// - `ctx` 填充目录项的上下文
+    /// - ctx 填充目录项的上下文
     pub fn read_dir(&self, ctx: &mut FilldirContext) -> Result<(), SystemError> {
         let inode: &Arc<dyn IndexNode> = &self.inode;
         let mut current_pos = self.offset.load(Ordering::SeqCst);
 
         // POSIX 标准要求readdir应该返回. 和 ..
-        // 但是观察到在现有的终端下运行命令，不做处理也能正常返回. 和 .. 这里先不做处理
+        // 但是观察到在现有的子目录中已经包含，不做处理也能正常返回. 和 .. 这里先不做处理
 
         // 迭代读取目录项
         let readdir_subdirs_name = inode.list()?;

@@ -1,5 +1,6 @@
 pub mod fcntl;
 pub mod file;
+pub mod iov;
 pub mod mount;
 pub mod open;
 pub mod stat;
@@ -17,13 +18,13 @@ use crate::{
     driver::base::{
         block::block_device::BlockDevice, char::CharDevice, device::device_number::DeviceNumber,
     },
+    filesystem::epoll::EPollItem,
     ipc::pipe::LockedPipeInode,
     libs::{
         casting::DowncastArc,
         spinlock::{SpinLock, SpinLockGuard},
     },
     mm::{fault::PageFaultMessage, VmFaultReason},
-    net::event_poll::EPollItem,
     time::PosixTimeSpec,
 };
 
@@ -1073,8 +1074,8 @@ macro_rules! producefs {
 
 define_filesystem_maker_slice!(FSMAKER);
 
-/// # 批量填充Dirent时的上下文
-/// linux语义是通过getdents_callback *类型来实现类似链表的迭代填充，这里暂时考虑通过填充传入的缓冲区来实现
+/// # 批量填充Dirent时的上下文Add commentMore actions
+/// linux语义是通过getdents_callback *类型来实现类似链表的迭代填充，这里考虑通过填充传入的缓冲区来实现
 pub struct FilldirContext<'a> {
     buf: &'a mut [u8],
     current_pos: usize,
@@ -1093,6 +1094,12 @@ impl<'a> FilldirContext<'a> {
     }
 
     /// # 填充单个dirent结构体
+    ///
+    /// ## 参数
+    /// - name 目录项名称
+    /// - offset 当前目录项偏移量
+    /// - ino 目录项的inode的inode_id
+    /// - d_type 目录项的inode的file_type_num
     fn fill_dir(
         &mut self,
         name: &str,
@@ -1104,10 +1111,11 @@ impl<'a> FilldirContext<'a> {
         let dirent_size = ::core::mem::size_of::<Dirent>() - ::core::mem::size_of::<u8>();
         let reclen = name_len + dirent_size + 1;
 
-        //将reclen向上对齐usize大小
+        // 将reclen向上对齐usize大小
         let align_up = |len: usize, align: usize| -> usize { (len + align - 1) & !(align - 1) };
         let align_up_reclen = align_up(reclen, ::core::mem::size_of::<usize>());
 
+        // 当前缓冲区空间已不足，返回EINVAL
         if align_up_reclen > self.remain_size {
             self.error = Some(SystemError::EINVAL);
             return Err(SystemError::EINVAL);
